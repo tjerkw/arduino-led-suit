@@ -1,0 +1,246 @@
+#include <Adafruit_NeoPixel.h>
+#include <IRemote.h>
+#include "pitches.h"
+
+#define PIN 6
+#define BUZZER 12
+
+// Parameter 1 = number of pixels in strip
+// Parameter 2 = pin number (most are valid)
+// Parameter 3 = pixel type flags, add together as needed:
+//   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
+//   NEO_KHZ400  400 KHz (classic 'v1' (not v2) FLORA pixels, WS2811 drivers)
+//   NEO_GRB     Pixels are wired for GRB bitstream (most NeoPixel products)
+//   NEO_RGB     Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(30*3, PIN, NEO_GRB + NEO_KHZ800);
+uint16_t num = strip.numPixels();
+uint32_t off = strip.Color(0, 0, 0);
+uint32_t red = strip.Color(255, 0, 0);
+uint32_t green = strip.Color(0, 255, 0);
+uint32_t blue = strip.Color(0, 0, 255);
+uint32_t yellow = strip.Color(255, 255, 0);
+uint32_t white = strip.Color(255, 255, 255);
+
+uint32_t colors[] = {
+   strip.Color(0, 255, 0),
+   strip.Color(0, 0, 255),
+   strip.Color(255, 0, 0)
+};
+int numColors = 3;
+
+uint32_t colorFunction(uint32_t time, uint16_t i) {
+  return strip.Color(0, sinusColor(i, time, num*2, 400), sinusColor(i, time, num, 600));
+}
+
+uint32_t linear(uint32_t time, uint16_t i) {
+  return strip.Color((time/2)%255, (time/2)%255, 0);
+}
+
+uint32_t binaryCounter(uint32_t time, uint16_t i) {
+  int speed = 100;
+  int step = time / speed;
+  return 1 << i & step ? red : off; 
+}
+
+
+int loopCount = 0;
+uint32_t walker(uint32_t time, uint16_t i) {
+  int speed = 30;
+  int step = time / speed;
+  if (step % num == 0) {
+   loopCount++;
+  }
+  return step % num == i ? colors[loopCount % numColors] : off;
+}
+
+uint32_t walkerFill(uint32_t time, uint16_t i) {
+  int speed = 30;
+  int step = time / speed;
+  if (step % num == 0) {
+   loopCount++;
+  }
+  return step % num > i ? colors[loopCount % numColors] : off;
+}
+
+/**
+ * Mirrors an existing function
+ **/
+uint32_t mirror(uint32_t time, uint16_t i, uint32_t (*f)(uint32_t, uint16_t)) {
+  uint16_t middle = num/2;
+  return f(time, i > middle ? num - i + 1 : i);
+}
+
+/**
+ * Mirrors an existing function
+ **/
+uint32_t randomize(uint32_t time, uint16_t i, uint32_t (*f)(uint32_t, uint16_t)) {
+  i = (uint16_t)random(0, num);
+  return f(time, i);
+}
+
+/**
+ * Time warp sinus
+ */
+uint32_t warped_time = 0;
+uint32_t prev_time = 0;
+uint32_t time_warp_sinus(uint32_t time, uint16_t i, uint32_t (*f)(uint32_t, uint16_t)) {
+  if (i == 0) {
+    uint32_t delta= (time - prev_time);
+    warped_time += delta + delta * 5 * (((float) 1) + sin(time / 3000));
+    prev_time = time;
+  }
+  return f(warped_time, i);
+}
+
+
+uint32_t lengthSinus(uint32_t time, uint16_t i) {
+  float speed = 200;
+  if((0.5+sin(time/speed*PI))*num > i) {
+    return red; 
+  } else {
+    return blue; 
+  }
+}
+
+uint32_t glow(uint32_t time, uint16_t i) {
+  float speed = 400;
+  strip.Color((1+sin(time/speed*PI))/2*255, 0, 0);
+}
+
+
+uint32_t colorWheel(uint32_t time, uint16_t i) {
+    int speed = 100+300+sin(time/(float)2000*2*PI)*300;
+    return strip.Color(
+      sinusColor(i, time, num/2, speed)/ 3,
+      sinusColor(i+(num/6)*2, time, num/2, speed),
+      sinusColor(i+(num/6), time, num/2, speed)
+    );
+}
+
+uint32_t combine(uint32_t time, uint16_t i) {
+ uint16_t sections = 3;
+ uint16_t sectionSize = num / sections;
+ if (i > 2 * sectionSize) {
+  return colorFunction(time, i);
+ }
+ if (i > sectionSize) {
+   return stroboScope(time, i);
+ }
+ return colorFunction(time, i);
+}
+
+uint32_t combineTime(uint32_t time, uint16_t i) {
+  uint32_t duration = 800;
+  uint32_t (*fs[])(uint32_t, uint16_t) = {
+    glow,
+    stroboScope,
+    colorFunction, 
+    randomPixelMultiple,
+    walkerFill,
+    glow,
+    stroboScope
+  };
+  return (*fs[(time / duration) % 2]) (time, i);
+}
+  
+
+uint32_t stroboScope(uint32_t time, uint16_t i) {
+  uint32_t sleep = 50;
+  int step = time / sleep;
+  if (step % 2 == 0) {
+    return off;
+  } else {
+    if(step/3==0 && i > 15) {
+      return off;
+    }
+    if(time / sleep % 7 == 0) {
+      return red;
+    } else if (time / sleep % 5 == 0) {
+     return green; 
+    } else {
+      return blue;
+    }
+  }
+}
+
+int sinusColor(uint16_t i, uint32_t time, uint16_t ledLength, int speed) {
+  return (1+sin((i/(float)ledLength)*2*PI+time/(float)speed*PI))/(float)2*255;
+}
+
+uint32_t gateFunction(uint32_t time, uint16_t i) {
+ return i%2 == 0 ? colorFunction(time, i) : off; 
+}
+
+uint32_t beerFill(uint32_t time, uint16_t i) {
+ int step = time / 200;
+ if(time>i*200) {
+   return i > num - 10 ? green : yellow;
+   
+ } else {
+  return off; 
+ }
+}
+
+uint32_t pixelLoop(uint32_t time, uint16_t i) {
+ return i;
+}
+
+uint16_t r1 = 3;
+uint32_t randomPixelMultiple(uint32_t time, uint16_t i) {
+ if( i == r1) {
+   //randomSeed(analogRead(0));
+   r1 =  (uint16_t)random(0, num-1);
+   return blue;
+ } else {
+   return off;
+ }
+}
+
+
+uint16_t r2 = 3;
+uint32_t current_steps = 0;
+uint32_t randomPixelOne(uint32_t time, uint16_t i, uint32_t (*f)(uint32_t, uint16_t)) {
+ uint32_t step = 200;
+ uint32_t steps = time / step;
+ if (steps > current_steps) {
+   if (i== 0) { current_steps = steps; }
+   if(i==0) {
+      r2 =  (uint16_t)random(0, num-1);
+   }
+ }
+   if( i == r2) {
+     return f(time, i);
+   } else {
+     return -1;
+   }
+}
+
+void setup() {
+
+  Serial.begin(115200);
+  Serial.println("Ready to decode IR!");
+  
+  strip.begin();
+  strip.show(); // Initialize all pixels to 'off'
+}
+
+uint32_t time = 0;
+void loop() {
+  while(true) {
+    uint32_t color = 0;
+    for(uint16_t i=0; i<num; i++) {
+      //color = time_warp_sinus(time, i, randomPixelOne);
+      color = randomPixelMultiple(time, i);
+      if (color!=-1) {
+        strip.setPixelColor(i, color);
+      }
+      tone(BUZZER, color);
+    }
+    strip.show();
+    int wait = 15;
+    delay(wait);
+    time+=wait;
+  }
+}
+
+
